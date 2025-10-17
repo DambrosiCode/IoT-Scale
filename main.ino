@@ -5,19 +5,39 @@
   The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 *********/
 #include <WiFi.h>
+#include <ArduinoJson.h>
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
-
+#include <HTTPClient.h>
+HTTPClient http;
 #include "HX711.h"
+#include "time.h"
+const char* ntpServer = "pool.ntp.org";
+unsigned long epochTime; // time
+float sensorWeight; // scale weight
+String selectedFood;
+int currentRow;
+
+#include <ESP_Google_Sheet_Client.h>
+#define PROJECT_ID "..."
+#define CLIENT_EMAIL "..."
+const char PRIVATE_KEY[] PROGMEM = "...";
+const char spreadsheetId[] = "...";
+// Token Callback function
+void tokenStatusCallback(TokenInfo info);
+
 //  adjust pins if needed
 uint8_t dataPin = 33;
 uint8_t clockPin = 25;
+
+const char* FOOD_PARAM = "food";
 
 float f;
 HX711 scale;
 // Replace with your network credentials
 const char* ssid = "...";
 const char* password = "...";
+const String _GAS_ID = "...";
 
 // Create AsyncWebServer object on port 80
 AsyncWebServer server(80);
@@ -32,8 +52,9 @@ unsigned long timerDelay = 300;
 
 float weight;
 
-void getSensorReadings(){
+float getSensorReadings(){
   weight = scale.get_units(5);
+  return weight;
 }
 
 // Initialize WiFi
@@ -55,6 +76,32 @@ void initScale(){
   scale.tare();
 }
 
+void initGS(){
+      // Set the callback for Google API access token generation status (for debug only)
+    GSheet.setTokenCallback(tokenStatusCallback);
+    
+    // Set the seconds to refresh the auth token before expire (60 to 3540, default is 300 seconds)
+    GSheet.setPrerefreshSeconds(10 * 60);
+    
+    // Begin the access token generation for Google API authentication
+    GSheet.begin(CLIENT_EMAIL, PROJECT_ID, PRIVATE_KEY);
+}
+std::vector<String> plantList;
+void initVeggieSheet(){
+  }
+
+// Function that gets current epoch time
+unsigned long getTime() {
+  time_t now;
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) {
+    //Serial.println("Failed to obtain time");
+    return(0);
+  }
+  time(&now);
+  return now;
+}
+
 String processor(const String& var){
   getSensorReadings();
   //Serial.println(var);
@@ -63,6 +110,30 @@ String processor(const String& var){
   }
   return String();
 }
+
+void sendSheetData(String item, String weight){
+    String url = "https://script.google.com/macros/s/" + _GAS_ID;
+    String queryString = "/exec?colName="+item+"&value="+weight;
+    http.begin(url);
+    http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+    int httpCode = http.POST(queryString);
+    // httpCode will be negative on error
+    if (httpCode > 0) {
+      // file found at server
+      if (httpCode == HTTP_CODE_OK) {
+        String payload = http.getString();
+      } else {
+        // HTTP header has been send and Server response header has been handled
+        Serial.printf("[HTTP] GET... code: %d\n", httpCode);
+      }
+    } else {
+      Serial.printf("[HTTP] GET... failed, error: %s\n", http.errorToString(httpCode).c_str());
+    }
+    Serial.println(http.getString());
+    http.end();
+
+
+  }
 
 const char index_html[] PROGMEM = R"rawliteral(
 <!DOCTYPE HTML><html>
@@ -148,32 +219,38 @@ const char index_html[] PROGMEM = R"rawliteral(
     <i class="fa-solid fa-plate-wheat" style="margin:10px"></i>
   </div>
   <div class="content">
+  <form action="/save">
+    <!-- weight card-->
     <div class="cards">
       <div class="card">
-        <p>
+         <p>
           <i class="fas fa-weight-scale" style="color:#059e8a;"></i> WEIGHT
           <span class="reading">
          </p>
          <p>
           <span id="temp">%WEIGHT%</span> grams</span>
-        </p>
+         </p>
       </div>
     </div>
     <br>
-    <button type="button" class="btn btn-primary" onclick="tareScale(this)">Tare</button>
+    <!-- tare scale -->
+    <button type="button" class="btn btn-primary" onclick="run(this, '/tare')">Tare</button>
     <hr>
+    <!-- typeahead-->
     <div class="bs-example">
-        <input type="text" class="typeahead tt-query" autocomplete="off" spellcheck="false">
+        <input type="text" name="food" class="typeahead tt-query" autocomplete="off" spellcheck="false">
     </div>
-    <!-- TODO ass a save form button -->
-    <!-- save values to google sheets -->
+    <button type="submit" class="btn btn-primary">Save</button>
+    </form>
   </div>
   <script>
-    function tareScale(element) {
+    function run(element, path){
       var xhr = new XMLHttpRequest();
-      xhr.open("GET", "/tare", true);
+      xhr.open("GET", path, true);
+      console.log(path);
       xhr.send();
-    }
+    };
+
     
     if (!!window.EventSource) {
      var source = new EventSource('/events');
@@ -200,7 +277,41 @@ const char index_html[] PROGMEM = R"rawliteral(
     // typeahead
     $(document).ready(function(){
         // Defining the local dataset
-        var plants = ['Pepper', 'Tomato', 'Basil', 'Thyme', 'Carrots'];
+        var plants = ["Basil cinnamon",
+                      "Basil global",
+                      "Basil pesto",
+                      "Basil purple",
+                      "Bean chickpea",
+                      "Bean yardlong",
+                      "Cabbage",
+                      "Carrot",
+                      "Chives",
+                      "Cucumber",
+                      "Dill",
+                      "Lettuce",
+                      "Kale",
+                      "Mint",
+                      "Onion",
+                      "Oregeno",
+                      "Parsley",
+                      "Parsley Root",
+                      "Pea",
+                      "Pepper banana",
+                      "Pepper chili",
+                      "Pepper jalapeno",
+                      "Potatoes",
+                      "Radish",
+                      "Rosemary",
+                      "Sage",
+                      "Spinach",
+                      "Sweet Potato",
+                      "Tomato cherry",
+                      "Tomato cherokee purple",
+                      "Tomato rutgers",
+                      "Tomato san marzano",
+                      "Tomato mystery",
+                      "Tomato yellow pear",
+                      "Thyme"];
         
         // Constructing the suggestion engine
         var plants = new Bloodhound({
@@ -226,12 +337,14 @@ const char index_html[] PROGMEM = R"rawliteral(
 
 void setup() {
   Serial.begin(115200);
-
-
   initScale();  
   initWiFi();
+  initGS();
 
+    //Configure time
+    configTime(0, 0, ntpServer);
 
+  
   // Handle Web Server
   //// home page
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -241,6 +354,41 @@ void setup() {
   //// tare 
   server.on("/tare", HTTP_GET, [](AsyncWebServerRequest *request){
     scale.tare();
+    request->send(200, "text/html", index_html, processor);
+  });
+
+  //// save weight
+  server.on("/save", HTTP_GET, [](AsyncWebServerRequest *request){
+    String inputFood;
+    inputFood = request->getParam(FOOD_PARAM)->value();
+
+    // TODO: redirect to home page again 
+    // TODO: add weight to form?
+   
+    FirebaseJson response;
+    Serial.println("\nAppend spreadsheet values...");
+    Serial.println("----------------------------");
+    FirebaseJson valueRange;
+
+    valueRange.add("majorDimension", "COLUMNS");
+    epochTime = getTime();
+    sensorWeight = getSensorReadings();
+
+    valueRange.set("values/[0]/[0]", epochTime);
+    valueRange.set("values/[2]/[0]", "=EPOCHTODATE(INDIRECT(ADDRESS(ROW(), COLUMN()-1, 4)))");
+    valueRange.set("values/[3]/[0]", sensorWeight);
+    valueRange.set("values/[4]/[0]", inputFood);
+    
+    // Append values to the spreadsheet
+    bool success = GSheet.values.append(&response /* returned response */, spreadsheetId /* spreadsheet Id to append */, "Sheet1!A1" /* range to append */, &valueRange /* data range to append */);
+    if (success){
+        response.toString(Serial, true);
+        valueRange.clear();
+    }
+    else{
+        Serial.println(GSheet.errorReason());
+    }
+    initVeggieSheet();
     request->send(200, "text/html", index_html, processor);
   });
 
@@ -259,6 +407,10 @@ void setup() {
 }
 
 void loop() {
+  //check google sheet ready
+  bool ready = GSheet.ready();
+
+  //get sensor readings
   if ((millis() - lastTime) > timerDelay) {
     getSensorReadings();
     Serial.printf("Weight = %.2f ºC \n", weight);
@@ -270,4 +422,14 @@ void loop() {
     
     lastTime = millis();
   }
+}
+
+void tokenStatusCallback(TokenInfo info){
+    if (info.status == token_status_error){
+        GSheet.printf("Token info: type = %s, status = %s\n", GSheet.getTokenType(info).c_str(), GSheet.getTokenStatus(info).c_str());
+        GSheet.printf("Token error: %s\n", GSheet.getTokenError(info).c_str());
+    }
+    else{
+        GSheet.printf("Token info: type = %s, status = %s\n", GSheet.getTokenType(info).c_str(), GSheet.getTokenStatus(info).c_str());
+    }
 }
