@@ -4,6 +4,12 @@
   Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files.  
   The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 *********/
+// SD CARD
+#include "FS.h"
+#include "SD.h"
+#include "SPI.h"
+
+// WIFI
 #include <WiFi.h>
 #include <ArduinoJson.h>
 #include <AsyncTCP.h>
@@ -18,11 +24,9 @@ float sensorWeight; // scale weight
 String selectedFood;
 int currentRow;
 
+// GOOGLE SHEETS
 #include <ESP_Google_Sheet_Client.h>
-#define PROJECT_ID "..."
-#define CLIENT_EMAIL "..."
-const char PRIVATE_KEY[] PROGMEM = "...";
-const char spreadsheetId[] = "...";
+String spreadsheetId; 
 // Token Callback function
 void tokenStatusCallback(TokenInfo info);
 
@@ -35,9 +39,11 @@ const char* FOOD_PARAM = "food";
 float f;
 HX711 scale;
 // Replace with your network credentials
-const char* ssid = "...";
-const char* password = "...";
-const String _GAS_ID = "...";
+String _GAS_ID; 
+
+String ssid_pwd;
+String ssid_un;
+
 
 // Create AsyncWebServer object on port 80
 AsyncWebServer server(80);
@@ -60,7 +66,9 @@ float getSensorReadings(){
 // Initialize WiFi
 void initWiFi() {
     WiFi.mode(WIFI_STA);
-    WiFi.begin(ssid, password);
+    Serial.print(ssid_un);
+    Serial.print(ssid_pwd);
+    WiFi.begin(ssid_un.c_str(), ssid_pwd.c_str());
     Serial.print("Connecting to WiFi ..");
     while (WiFi.status() != WL_CONNECTED) {
         Serial.print('.');
@@ -83,8 +91,8 @@ void initGS(){
     // Set the seconds to refresh the auth token before expire (60 to 3540, default is 300 seconds)
     GSheet.setPrerefreshSeconds(10 * 60);
     
-    // Begin the access token generation for Google API authentication
-    GSheet.begin(CLIENT_EMAIL, PROJECT_ID, PRIVATE_KEY);
+    // Begin the access token generation for Google API authentication    
+    GSheet.begin("/iot-scale-472200-bcfc77255d1e.json", esp_google_sheet_file_storage_type_sd);
 }
 std::vector<String> plantList;
 void initVeggieSheet(){
@@ -102,14 +110,7 @@ unsigned long getTime() {
   return now;
 }
 
-String processor(const String& var){
-  getSensorReadings();
-  //Serial.println(var);
-  if(var == "WEIGHT"){
-    return String(weight);
-  }
-  return String();
-}
+
 
 void sendSheetData(String item, String weight){
     String url = "https://script.google.com/macros/s/" + _GAS_ID;
@@ -135,216 +136,104 @@ void sendSheetData(String item, String weight){
 
   }
 
+// Read Files
+void initSDReader(){
+    Serial.begin(115200);
+  if(!SD.begin(5)){
+    Serial.println("Card Mount Failed");
+    return;
+  }
+  uint8_t cardType = SD.cardType();
+
+  if(cardType == CARD_NONE){
+    Serial.println("No SD card attached");
+    return;
+  }
+
+  Serial.print("SD Card Type: ");
+  if(cardType == CARD_MMC){
+    Serial.println("MMC");
+  } else if(cardType == CARD_SD){
+    Serial.println("SDSC");
+  } else if(cardType == CARD_SDHC){
+    Serial.println("SDHC");
+  } else {
+    Serial.println("UNKNOWN");
+  }
+}
+
+String readFile(fs::FS &fs, const char * path){
+  // open file for reading
+  File file = SD.open(path, FILE_READ);
+  if (file) {
+    if ( file.available()) {
+      String data = file.readString();
+      file.close();
+      return data;
+    }
+
+    file.close();
+  } else {
+    Serial.print(F("SD Card: error on opening file"));
+  }
+}
+
+
+
 const char index_html[] PROGMEM = R"rawliteral(
 <!DOCTYPE HTML><html>
-<head>
-  <title>IoT Scale</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <!-- jQuery -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js" integrity="sha512-v2CJ7UaYy4JwqLDIrZUI/4hqeoQieOmAZNXBeQyjo21dadnwR+8ZaIJVT8EE2iyI61OV8e6M8PP2/4hpQINQ/g==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/typeahead.js/0.11.1/typeahead.jquery.min.js" integrity="sha512-AnBkpfpJIa1dhcAiiNTK3JzC3yrbox4pRdrpw+HAI3+rIcfNGFbVXWNJI0Oo7kGPb8/FG+CMSG8oADnfIbYLHw==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-  <!-- Fontawesome -->
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/7.0.1/css/all.min.css" integrity="sha512-2SwdPD6INVrV/lHTZbO2nodKhrnDdJK9/kg2XD1r9uGqPo1cUbujc+IYdlYdEErWNu69gVcYgdxlmVmzTWnetw==" crossorigin="anonymous" referrerpolicy="no-referrer" />  
-  <!-- BS5 -->
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-EVSTQN3/azprG1Anm3QDgpJLIm9Nao0Yz1ztcQTwFspd3yD65VohhpuuCOmLASjC" crossorigin="anonymous">
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/js/bootstrap.bundle.min.js" integrity="sha384-MrcW6ZMFYlzcLA8Nl+NtUVF0sA7MsXsP1UyJoMp4YLEuNSfAP+JcXn/tWtIaxVXM" crossorigin="anonymous"></script>
-  <!-- Typeahead -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/typeahead.js/0.11.1/typeahead.bundle.min.js" integrity="sha512-qOBWNAMfkz+vXXgbh0Wz7qYSLZp6c14R0bZeVX2TdQxWpuKr6yHjBIM69fcF8Ve4GUX6B6AKRQJqiiAmwvmUmQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/typeahead.js/0.11.1/bloodhound.min.js" integrity="sha512-kC/4GX7MxhslxDVyJOuyMVjr0uc3c/qp9S/E2ORxkttE07pdeImi5LhdRc5aX6sxnhFuRW/tQrRMjTlxZYC8SQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-  
-  <link rel="icon" href="data:,">
-  <style>
-    html {font-family: Arial; display: inline-block; text-align: center;}
-    p { font-size: 1.2rem;}
-    body {  margin: 0;}
-    .topnav { overflow: hidden; background-color: #43882A; color: white; font-size: 1rem; display: flex; justify-content: center; }
-    .content { padding: 20px; }
-    .card { background-color: white; box-shadow: 2px 2px 12px 1px rgba(140,140,140,.5); }
-    .cards { max-width: 800px; margin: 0 auto; display: grid; grid-gap: 2rem; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
-    .reading { font-size: 1.4rem; }
-    /* Typeahead styling */
-    .bs-example {
-        font-family: sans-serif;
-        position: relative;
-    }
-    .typeahead, .tt-query, .tt-hint {
-        border: 2px solid #CCCCCC;
-        border-radius: 8px;
-        font-size: 22px; /* Set input font size */
-        height: 30px;
-        line-height: 30px;
-        outline: medium none;
-        padding: 8px 12px;
-        width: 100%;
-    }
-    .typeahead {
-        background-color: #FFFFFF;
-    }
-    .typeahead:focus {
-        border: 2px solid #0097CF;
-    }
-    .tt-query {
-        box-shadow: 0 1px 1px rgba(0, 0, 0, 0.075) inset;
-    }
-    .tt-hint {
-        color: #999999;
-    }
-    .tt-menu {
-        background-color: #FFFFFF;
-        border: 1px solid rgba(0, 0, 0, 0.2);
-        border-radius: 8px;
-        box-shadow: 0 5px 10px rgba(0, 0, 0, 0.2);
-        margin-top: 12px;
-        padding: 8px 0;
-        width: 100%;
-    }
-    .tt-suggestion {
-        font-size: 22px;  /* Set suggestion dropdown font size */
-        padding: 3px 20px;
-    }
-    .tt-suggestion:hover {
-        cursor: pointer;
-        background-color: #0097CF;
-        color: #FFFFFF;
-    }
-    .tt-suggestion p {
-        margin: 0;
-    }
-  </style>
-</head>
-<body>
-  <div class="topnav">
-    <i class="fa-solid fa-plate-wheat" style="margin:10px"></i>
-    <h1>Vegetable Scale</h1>
-    <i class="fa-solid fa-plate-wheat" style="margin:10px"></i>
-  </div>
-  <div class="content">
-  <form action="/save">
-    <!-- weight card-->
-    <div class="cards">
-      <div class="card">
-         <p>
-          <i class="fas fa-weight-scale" style="color:#059e8a;"></i> WEIGHT
-          <span class="reading">
-         </p>
-         <p>
-          <span id="temp">%WEIGHT%</span> grams</span>
-         </p>
-      </div>
-    </div>
-    <br>
-    <!-- tare scale -->
-    <button type="button" class="btn btn-primary" onclick="run(this, '/tare')">Tare</button>
-    <hr>
-    <!-- typeahead-->
-    <div class="bs-example">
-        <input type="text" name="food" class="typeahead tt-query" autocomplete="off" spellcheck="false">
-    </div>
-    <button type="submit" class="btn btn-primary">Save</button>
-    </form>
-  </div>
-  <script>
-    function run(element, path){
-      var xhr = new XMLHttpRequest();
-      xhr.open("GET", path, true);
-      console.log(path);
-      xhr.send();
-    };
-
-    
-    if (!!window.EventSource) {
-     var source = new EventSource('/events');
-     
-     source.addEventListener('open', function(e) {
-      console.log("Events Connected");
-     }, false);
-     source.addEventListener('error', function(e) {
-      if (e.target.readyState != EventSource.OPEN) {
-        console.log("Events Disconnected");
-      }
-     }, false);
-     
-     source.addEventListener('message', function(e) {
-      console.log("message", e.data);
-     }, false);
-     
-     source.addEventListener('weight', function(e) {
-      console.log("weight", e.data);
-      document.getElementById("temp").innerHTML = e.data;
-     }, false);
-    }
-
-    // typeahead
-    $(document).ready(function(){
-        // Defining the local dataset
-        var plants = ["Basil cinnamon",
-                      "Basil global",
-                      "Basil pesto",
-                      "Basil purple",
-                      "Bean chickpea",
-                      "Bean yardlong",
-                      "Cabbage",
-                      "Carrot",
-                      "Chives",
-                      "Cucumber",
-                      "Dill",
-                      "Lettuce",
-                      "Kale",
-                      "Mint",
-                      "Onion",
-                      "Oregeno",
-                      "Parsley",
-                      "Parsley Root",
-                      "Pea",
-                      "Pepper banana",
-                      "Pepper chili",
-                      "Pepper jalapeno",
-                      "Potatoes",
-                      "Radish",
-                      "Rosemary",
-                      "Sage",
-                      "Spinach",
-                      "Sweet Potato",
-                      "Tomato cherry",
-                      "Tomato cherokee purple",
-                      "Tomato rutgers",
-                      "Tomato san marzano",
-                      "Tomato mystery",
-                      "Tomato yellow pear",
-                      "Thyme"];
-        
-        // Constructing the suggestion engine
-        var plants = new Bloodhound({
-            datumTokenizer: Bloodhound.tokenizers.whitespace,
-            queryTokenizer: Bloodhound.tokenizers.whitespace,
-            local: plants
-        });
-        
-        // Initializing the typeahead
-        $('.typeahead').typeahead({
-            hint: true,
-            highlight: true, /* Enable substring highlighting */
-            minLength: 1 /* Specify minimum characters required for showing result */
-        },
-        {
-            name: 'plants',
-            source: plants
-        });
-    });  
-  </script>
-</body>
+%HTML%
 </html>)rawliteral";
+
+
+String processor(const String& var){
+  // get weight from sensor
+  getSensorReadings();
+  if(var == "WEIGHT"){
+    return String(weight);
+    // load plant list
+  } else if (var == "HTML"){
+    return readFile(SD, "/home.html");
+    }
+  return String();
+}
 
 void setup() {
   Serial.begin(115200);
+  // read data from files
+  initSDReader();
+  ssid_pwd = readFile(SD, "/ssid_password.txt");
+  ssid_pwd.trim();
+  
+  ssid_un = readFile(SD, "/ssid.txt");
+  ssid_un.trim();
+  
+  _GAS_ID = readFile(SD, "/gas_id.txt");
+  _GAS_ID.trim();
+
+  spreadsheetId = readFile(SD, "/spreadsheet_id.txt");
+  spreadsheetId.trim();
+  
   initScale();  
   initWiFi();
   initGS();
 
-    //Configure time
-    configTime(0, 0, ntpServer);
+  //Configure time
+  configTime(0, 0, ntpServer);
 
-  
+  // Get food list 
+  String str(readFile(SD, "/plants_list.txt"));
+  char str_array[str.length()];
+  str.toCharArray(str_array, str.length());
+  char* token = strtok(str_array, ",");
+  char *plant_array[100];
+  int i = 0;
+  while (token != NULL)
+    {
+        plant_array[i++] = token;
+        token = strtok (NULL, ",");
+    }
+
   // Handle Web Server
   //// home page
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -392,6 +281,8 @@ void setup() {
     request->send(200, "text/html", index_html, processor);
   });
 
+
+
   // Handle Web Server Events
   events.onConnect([](AsyncEventSourceClient *client){
     if(client->lastId()){
@@ -404,7 +295,10 @@ void setup() {
   server.addHandler(&events);
   // start server
   server.begin();
+  Serial.println(WiFi.localIP());
+
 }
+
 
 void loop() {
   //check google sheet ready
@@ -413,9 +307,6 @@ void loop() {
   //get sensor readings
   if ((millis() - lastTime) > timerDelay) {
     getSensorReadings();
-    Serial.printf("Weight = %.2f ºC \n", weight);
-    Serial.println();
-
     // Send Events to the Web Client with the Sensor Readings
     events.send("ping",NULL,millis());
     events.send(String(weight).c_str(),"weight",millis());
