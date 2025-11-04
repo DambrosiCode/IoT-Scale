@@ -26,7 +26,7 @@ int currentRow;
 
 // GOOGLE SHEETS
 #include <ESP_Google_Sheet_Client.h>
-String spreadsheetId; 
+String spreadsheetId; //DELETE = "16yuLGQIBaB1sbhxDKLsr7hAfya5Y9Ieffzd01VcxAFs";
 // Token Callback function
 void tokenStatusCallback(TokenInfo info);
 
@@ -39,7 +39,7 @@ const char* FOOD_PARAM = "food";
 float f;
 HX711 scale;
 // Replace with your network credentials
-String _GAS_ID; 
+String _GAS_ID; //DELETE = "AKfycbwVclbVWXG9UjzA18AQMx7PE8bbE8qXNjgkVfBHR4_MsWpO3K3kV4m9dCL0aXMmNYwJ";
 
 String ssid_pwd;
 String ssid_un;
@@ -178,7 +178,21 @@ String readFile(fs::FS &fs, const char * path){
   }
 }
 
+void appendFile(fs::FS &fs, const char * path, const char * message){
+  Serial.printf("Appending to file: %s\n", path);
 
+  File file = fs.open(path, FILE_APPEND);
+  if(!file){
+    Serial.println("Failed to open file for appending");
+    return;
+  }
+  if(file.print(message)){
+    Serial.println("Message appended");
+  } else {
+    Serial.println("Append failed");
+  }
+  file.close();
+}
 
 const char index_html[] PROGMEM = R"rawliteral(
 <!DOCTYPE HTML><html>
@@ -267,6 +281,16 @@ void setup() {
     valueRange.set("values/[2]/[0]", "=EPOCHTODATE(INDIRECT(ADDRESS(ROW(), COLUMN()-1, 4)))");
     valueRange.set("values/[3]/[0]", sensorWeight);
     valueRange.set("values/[4]/[0]", inputFood);
+
+    String bckup;
+    bckup += String(epochTime);
+    bckup += ",=EPOCHTODATE(INDIRECT(ADDRESS(ROW(), COLUMN()-1, 4))),";
+    bckup += String(sensorWeight);
+    bckup += ",";
+    bckup += String(inputFood);
+    bckup += "\n";
+    //back up on local SD
+    appendFile(SD, "/data.csv", bckup.c_str());
     
     // Append values to the spreadsheet
     bool success = GSheet.values.append(&response /* returned response */, spreadsheetId /* spreadsheet Id to append */, "Sheet1!A1" /* range to append */, &valueRange /* data range to append */);
